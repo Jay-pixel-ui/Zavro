@@ -8,11 +8,19 @@ const schema = z.object({ email: z.string().trim().email().max(200), password: z
 export default handle(['POST'], async (req, res) => {
   const parsed = schema.safeParse(req.body);
   if (!parsed.success) throw httpError(400, 'invalid_input');
-  const r = await fetch(`${process.env.SUPABASE_URL}/auth/v1/token?grant_type=password`, {
-    method: 'POST',
-    headers: { apikey: process.env.SUPABASE_ANON_KEY, 'content-type': 'application/json' },
-    body: JSON.stringify(parsed.data),
-  });
+  const missing = ['SUPABASE_URL', 'SUPABASE_ANON_KEY'].filter((k) => !process.env[k]);
+  if (missing.length) throw httpError(503, 'not_configured', { missing }); // names only, never values
+  let r;
+  try {
+    r = await fetch(`${process.env.SUPABASE_URL.trim()}/auth/v1/token?grant_type=password`, {
+      method: 'POST',
+      headers: { apikey: process.env.SUPABASE_ANON_KEY.trim(), 'content-type': 'application/json' },
+      body: JSON.stringify(parsed.data),
+    });
+  } catch (e) {
+    console.error('auth upstream error', e?.cause?.code || e?.message);
+    throw httpError(502, 'auth_unreachable', { reason: String(e?.cause?.code || e?.message).slice(0, 80) });
+  }
   if (!r.ok) throw httpError(401, 'invalid_credentials');
   const s = await r.json();
   send(res, 200, { access_token: s.access_token, expires_in: s.expires_in });
